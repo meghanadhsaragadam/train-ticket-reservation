@@ -1,35 +1,16 @@
-name: ci/cd pipeline to deploy to nexus artifact
-on:
- push:
-   branches: master
-jobs:
- build-deploy:
-  runs-on: ubuntu-latest
-  steps:
-      - name: checkout code
-        uses: actions/checkout@v3
-      - name: set-up jdk
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'temurin'
-          java-version: '17'  
-      - name: maven validate
-        run: mvn validate 
-      - name: maven compile
-        run: mvn compile
-      - name: maven test
-        run: mvn test
-      - name: maven package
-        run: mvn packagename: CI - SonarQube Only
+name: CI/CD Pipeline - Build, SonarQube, Deploy to Nexus
 
 on:
   push:
-    branches: [dev, test, pre-prod, main]
-
+    branches:
+      - dev
+      - test
+      - pre-prod
+      - main
   workflow_dispatch:
 
 jobs:
-  sonar-scan:
+  build-sonar-deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -42,7 +23,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Cache Maven Packages
+      - name: Cache Maven Dependencies
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository
@@ -50,19 +31,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      - name: Build project
+      - name: Build & Test
         run: mvn -B clean verify
 
       - name: Run SonarQube Scan
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           mvn -B sonar:sonar \
             -Dsonar.projectKey=myapp \
             -Dsonar.projectName="MyApp" \
             -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
             -Dsonar.login=${{ secrets.SONAR_TOKEN }}
-        
+
       - name: Configure Maven settings.xml for Nexus
         run: |
           mkdir -p ~/.m2
@@ -78,11 +57,7 @@ jobs:
           </settings>
           EOF
 
-      - name: Upload Artifact to Nexus
-        run: mvn deploy -DaltDeploymentRepository=nexus::default::${{ secrets.NEXUS_REPO_URL }}
-      
-      
-
-        
-      
- 
+      - name: Deploy Artifact to Nexus
+        run: |
+          mvn deploy \
+          -DaltDeploymentRepository=nexus::default::${{ secrets.NEXUS_REPO_URL }}
