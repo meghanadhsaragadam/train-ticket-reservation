@@ -1,4 +1,4 @@
-# Use official Apache Tomcat base image with JDK 17
+# Use official Apache Tomcat base image with JDK 17 
 FROM tomcat:9.0-jdk17
 
 # Remove default Tomcat apps (optional, for a clean slate)
