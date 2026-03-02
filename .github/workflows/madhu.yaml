@@ -11,28 +11,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name:  Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name:  Set up Java
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name:  Build with Maven
+      - name: Build with Maven
         run: mvn clean package -DskipTests
 
-      - name:  Find WAR file
+      - name: Find WAR file
         run: echo "WAR_FILE=$(ls target/*.war | head -n 1)" >> $GITHUB_ENV
 
-      - name:  Upload WAR artifact
+      - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: war-file
           path: ${{ env.WAR_FILE }}
 
-      
       - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -56,7 +55,7 @@ jobs:
         run: |
           IMAGE_TAG=$(date +%s)
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-          docker build -t ${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG . 
+          docker build -t ${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG .
 
       - name: Tag Docker Image
         run: |
@@ -76,34 +75,49 @@ jobs:
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           docker push $ACCOUNT_ID.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-     
+
       - name: Install kubectl
         run: |
           curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
 
-    # 7. Update kubeconfig for EKS
       - name: Update kubeconfig
         run: |
-         aws eks update-kubeconfig \
-          --name ${{ secrets.EKS_CLUSTER_NAME }} \
-          --region ${{ secrets.AWS_REGION }}
-          
-    #  CREATE NAMESPACE IF NOT PRESENT
-      - name: Apply namespace manifest
-        run: |
-          kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/deployment.yaml -n ${{ secrets.K8S_NAMESPACE }}
-          kubectl apply -f k8s/service.yaml
+          aws eks update-kubeconfig \
+            --name ${{ secrets.EKS_CLUSTER_NAME }} \
+            --region ${{ secrets.AWS_REGION }}
 
-    # 8. Deploy to EKS
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/
+
       - name: Deploy to EKS
         run: |
-         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE=$ACCOUNT_ID.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+
+          echo "Deploying image: $IMAGE"
+
           kubectl set image deployment/train-ticket-deployment \
-            train-ticket-container=$ACCOUNT_ID.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
+            train-ticket-container=$IMAGE \
             -n ${{ secrets.K8S_NAMESPACE }}
 
           kubectl rollout status deployment/train-ticket-deployment \
-            -n ${{ secrets.K8S_NAMESPACE }} --timeout=200s
+            -n ${{ secrets.K8S_NAMESPACE }} --timeout=600s
+
+      - name: Debug Kubernetes if failed
+        if: failure()
+        run: |
+          echo "==== POD STATUS ===="
+          kubectl get pods -n ${{ secrets.K8S_NAMESPACE }}
+
+          echo "==== DEPLOYMENT DETAILS ===="
+          kubectl describe deployment train-ticket-deployment -n ${{ secrets.K8S_NAMESPACE }}
+
+          echo "==== EVENTS ===="
+          kubectl get events -n ${{ secrets.K8S_NAMESPACE }}
+
+          echo "==== POD LOGS ===="
+          POD=$(kubectl get pods -n ${{ secrets.K8S_NAMESPACE }} -o jsonpath="{.items[0].metadata.name}")
+          kubectl logs $POD -n ${{ secrets.K8S_NAMESPACE }}
